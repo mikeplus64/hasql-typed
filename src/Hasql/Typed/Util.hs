@@ -1,10 +1,14 @@
-{-# LANGUAGE ConstraintKinds, DataKinds, GADTs, MultiParamTypeClasses,
-             TypeFamilies, TypeOperators #-}
+{-# LANGUAGE ConstraintKinds, DataKinds, FlexibleContexts, FlexibleInstances,
+             GADTs, MultiParamTypeClasses, PolyKinds, TypeFamilies,
+             TypeOperators #-}
 module Hasql.Typed.Util where
-import GHC.Exts     (Constraint)
 import GHC.TypeLits
 
 class Yes
 instance Yes
 
 class No (error :: Symbol)
+
+class Is f a
+instance Is f (f a)
+
