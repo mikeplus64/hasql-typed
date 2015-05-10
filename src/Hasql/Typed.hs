@@ -11,7 +11,7 @@ import Data.Proxy
 --------------------------------------------------------------------------------
 import GHC.Exts                   (Constraint)
 import GHC.TypeLits
-import Language.Haskell.TH
+import Language.Haskell.TH        as TH
 import Language.Haskell.TH.Quote
 import Language.Haskell.TH.Syntax
 --------------------------------------------------------------------------------
@@ -51,6 +51,7 @@ class Model db a where
   type PrimaryKeys a :: [*]
   type Uniques     a :: [*]
   type References  a :: [*]
+  type Schema      a :: Symbol
   table  :: Table db (Columns a)
   schema :: proxy a -> Hasql.Stmt db
 
@@ -120,6 +121,15 @@ dropTypeMods (v,s,t0) =
     (mods, t') <- dropper t0
     return (mods, (v,s,t'))
 
+simpleDropTypeMods :: Type -> Type
+simpleDropTypeMods ty = case ty of
+  AppT (ConT c) t
+    | c == ''PrimaryKey -> simpleDropTypeMods t
+    | c == ''Unique     -> simpleDropTypeMods t
+  AppT (AppT (AppT (ConT c) (ConT _)) (LitT (StrTyLit _)) ) t
+    | c == ''Reference  -> simpleDropTypeMods t
+  _ -> ty
+
 columns :: Name -> [VarStrictType] -> Q Type
 columns _ =
   foldr
@@ -127,14 +137,22 @@ columns _ =
     [t|Column $(litT (strTyLit (nameBase v))) $(pure t) ': $acc |])
   [t| '[] |]
 
-formatSchema :: [(String, VarStrictType)] -> String
-formatSchema vsts =
-  "CREATE TABLE "
-  ++ "("
-  ++ intercalate ", " (map formatVST vsts)
-  ++ ")"
+formatSchema :: Name -> [(String, VarStrictType)] -> Q String
+formatSchema db vsts = do
+  cols <- mapM format vsts
+  return $!
+    "CREATE TABLE "
+    ++ "("
+    ++ intercalate ", " cols
+    ++ ")"
  where
-  formatVST (mods, (v, _, _)) = identifier v ++ " " ++ mods
+  format (mods, (v, _, ty)) = do
+    qRunIO (print (simpleDropTypeMods ty, db))
+    insts <- reifyInstances ''DBType [ConT db, simpleDropTypeMods ty]
+    qRunIO (print insts)
+
+    let [TySynInstD _ (TySynEqn _ (LitT (StrTyLit s))) ] = insts
+    return $! identifier v ++ " " ++ s ++ " " ++ mods
 
 model :: Name -> Dec -> Q [Dec]
 model backend dec = do
@@ -149,12 +167,16 @@ model backend dec = do
   qRunIO (print prims)
   qRunIO (print uniqs)
 
+  sql <- formatSchema backend typesNoMods
+
   (decNoMods :) <$>
     [d|instance Model $(conT backend) $(conT name) where
          type Columns     $(conT name) = $(columns backend v's'types)
          type PrimaryKeys $(conT name) = $(columns backend prims)
          type Uniques     $(conT name) = $(columns backend uniqs)
          type References  $(conT name) = $(columns backend refs)
-         table    = buildTable
-         schema _ = $(quoteExp Hasql.stmt (formatSchema typesNoMods))
+         type Schema      $(conT name) = $(litT (strTyLit sql))
+
+         table = buildTable
+         schema _ = $(quoteExp Hasql.stmt sql)
       |]
