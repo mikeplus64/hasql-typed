@@ -39,33 +39,55 @@ models ''Test [d|
     } deriving (Show)
   |]
 
-makeLensesFor [("tagId", "tid")] ''Tag
-
 {-
 >>> :i Tag
 data Tag = Tag {tagId :: !Int, tagName :: !String}
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
+instance Show Tag -- Defined at src/Hasql/Typed/Example.hs:22:1
 instance Model Test Tag
+  -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance Columns Tag
   = '[Column "tagId" (PrimaryKey Int),
       Column "tagName" (Unique String)]
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance PrimaryKeys Tag = '[Column "tagId" Int]
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance Uniques Tag = '[Column "tagName" String]
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance References Tag = '[]
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance Schema Tag
-  = "CREATE TABLE (\"tagId\" int8  PRIMARY KEY, \"tagName\" text  UNIQUE)"
-
+  = "CREATE TABLE \"Tag\"(\"tagId\" int8  PRIMARY KEY, \"tagName\" text  UNIQUE)"
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
+type instance TableName Tag = "Tag"
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 >>> :i Post
 data Post
-  = Post {postId :: !Int, postTag :: !Int, postContent :: !String}
+  = Post {postId :: !Int,
+          postTag :: !Int,
+          postAuthor :: !Int,
+          postContent :: !String}
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
+instance Show Post -- Defined at src/Hasql/Typed/Example.hs:22:1
 instance Model Test Post
+  -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance Columns Post
   = '[Column "postId" (PrimaryKey Int),
-      Column "postTag" (Reference Tag "tagId" Int),
+      Column "postTag" ((^.) Tag "tagId" Int),
+      Column "postAuthor" ((^.) Author "postAuthor" Int),
       Column "postContent" String]
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance PrimaryKeys Post = '[Column "postId" Int]
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance Uniques Post = '[]
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance References Post
-  = '[Column "postTag" (Reference Tag "tagId" Int)]
+  = '[Column "postAuthor" ((^.) Author "postAuthor" Int),
+      Column "postTag" ((^.) Tag "tagId" Int)]
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 type instance Schema Post
-  = "CREATE TABLE (\"postId\" int8  PRIMARY KEY, \"postTag\" int8  REFERENCES \"Tag\"(\"tagId\"), \"postContent\" text )"
+  = "CREATE TABLE \"Post\"(\"postId\" int8  PRIMARY KEY, \"postTag\" int8  REFERENCES \"Tag\"(\"tagId\"), \"postAuthor\" int8  REFERENCES \"Author\"(\"postAuthor\"), \"postContent\" text )"
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
+type instance TableName Post = "Post"
+        -- Defined at src/Hasql/Typed/Example.hs:22:1
 -}
