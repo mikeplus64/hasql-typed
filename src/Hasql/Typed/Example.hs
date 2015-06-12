@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds, QuasiQuotes, TemplateHaskell, TypeFamilies,
              TypeOperators #-}
 module Hasql.Typed.Example where
+import Control.Lens
 import Data.Int
 import Data.Word
 import Hasql.Typed
@@ -18,20 +19,27 @@ type instance DBType Test Word32 = "int4"
 type instance DBType Test Word64 = "int8"
 type instance DBType Test String = "text"
 
-model ''Test . head =<< [d|
+models ''Test [d|
   data Tag = Tag
     { tagId   :: {-# UNPACK #-} !(PrimaryKey Int)
     , tagName :: !(Unique String)
-    }
-  |]
+    } deriving (Show)
 
-model ''Test . head =<< [d|
   data Post = Post
     { postId      :: {-# UNPACK #-} !(PrimaryKey Int)
-    , postTag     :: {-# UNPACK #-} !((Tag `Reference` "tagId") Int)
+    , postTag     :: {-# UNPACK #-} !((Tag    ^. "tagId")      Int)
+    , postAuthor  :: {-# UNPACK #-} !((Author ^. "postAuthor") Int)
     , postContent :: !String
-    }
+    } deriving (Show)
+
+  data Author = Author
+    { authorId    :: {-# UNPACK #-} !(PrimaryKey Int)
+    , authorName  :: !String
+    , authorEmail :: !String
+    } deriving (Show)
   |]
+
+makeLensesFor [("tagId", "tid")] ''Tag
 
 {-
 >>> :i Tag

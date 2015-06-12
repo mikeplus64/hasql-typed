@@ -1,7 +1,7 @@
-{-# LANGUAGE DataKinds, FlexibleContexts, FlexibleInstances, GADTs,
-             MultiParamTypeClasses, PolyKinds, ScopedTypeVariables,
-             StandaloneDeriving, TemplateHaskell, TypeFamilies, TypeOperators,
-             UndecidableInstances #-}
+{-# LANGUAGE DataKinds, FlexibleContexts, FlexibleInstances,
+             FunctionalDependencies, GADTs, MultiParamTypeClasses, PolyKinds,
+             ScopedTypeVariables, StandaloneDeriving, TemplateHaskell,
+             TypeFamilies, TypeOperators, UndecidableInstances #-}
 module Hasql.Typed where
 import Control.Lens
 import Control.Monad.State.Strict
@@ -46,12 +46,13 @@ data Table db a where
 
 deriving instance Show (Table db a)
 
-class Model db a where
+class (KnownSymbol (TableName a), KnownSymbol (Schema a)) => Model db a | a -> db where
   type Columns     a :: [*]
   type PrimaryKeys a :: [*]
   type Uniques     a :: [*]
   type References  a :: [*]
   type Schema      a :: Symbol
+  type TableName   a :: Symbol
   table  :: Table db (Columns a)
   schema :: proxy a -> Hasql.Stmt db
 
@@ -67,12 +68,12 @@ instance BuildTable db '[] where
   {-# INLINE buildTable #-}
   buildTable = Empty
 
-newtype Reference parent column a = Reference a
+newtype (^.) parent column a = Reference a
 newtype PrimaryKey a = PrimaryKey a
 newtype Unique a = Unique a
 
 class IsModifier (a :: * -> *)
-instance IsModifier (Reference parent column)
+instance IsModifier (parent ^. column)
 instance IsModifier PrimaryKey
 instance IsModifier Unique
 
@@ -81,6 +82,7 @@ data ColumnsInfo = ColumnsInfo
   , _uniques    :: [VarStrictType]
   , _references :: [VarStrictType]
   }
+
 makeLenses ''ColumnsInfo
 
 identifier :: Name -> String
@@ -96,14 +98,12 @@ dropTypeMods (v,s,t0) =
             (sql, t') <- dropper t
             primaries %= (:) (v,s,t')
             return (sql ++ " PRIMARY KEY", t')
-
         | c == ''Unique -> do
             (sql, t') <- dropper t
             uniques %= (:) (v,s,t')
             return (sql ++ " UNIQUE", t')
-
       AppT (AppT (AppT (ConT c) (ConT parent)) (LitT (StrTyLit column)) ) t
-        | c == ''Reference -> do
+        | c == ''(^.) -> do
             (sql, t') <- dropper t
             references %= (:)
               (v, s,
@@ -114,9 +114,7 @@ dropTypeMods (v,s,t0) =
                     ++ " REFERENCES "
                     ++ identifier parent
                     ++ "(" ++ show column ++")", t')
-
       _ -> return ("", ty)
-
   in do
     (mods, t') <- dropper t0
     return (mods, (v,s,t'))
@@ -127,21 +125,21 @@ simpleDropTypeMods ty = case ty of
     | c == ''PrimaryKey -> simpleDropTypeMods t
     | c == ''Unique     -> simpleDropTypeMods t
   AppT (AppT (AppT (ConT c) (ConT _)) (LitT (StrTyLit _)) ) t
-    | c == ''Reference  -> simpleDropTypeMods t
+    | c == ''(^.)       -> simpleDropTypeMods t
   _ -> ty
 
 columns :: Name -> [VarStrictType] -> Q Type
-columns _ =
-  foldr
+columns _ = foldr
   (\(v,_,t) acc ->
     [t|Column $(litT (strTyLit (nameBase v))) $(pure t) ': $acc |])
   [t| '[] |]
 
-formatSchema :: Name -> [(String, VarStrictType)] -> Q String
-formatSchema db vsts = do
+formatSchema :: Name -> String -> [(String, VarStrictType)] -> Q String
+formatSchema db tableName vsts = do
   cols <- mapM format vsts
   return $!
     "CREATE TABLE "
+    ++ show tableName
     ++ "("
     ++ intercalate ", " cols
     ++ ")"
@@ -150,7 +148,6 @@ formatSchema db vsts = do
     qRunIO (print (simpleDropTypeMods ty, db))
     insts <- reifyInstances ''DBType [ConT db, simpleDropTypeMods ty]
     qRunIO (print insts)
-
     let [TySynInstD _ (TySynEqn _ (LitT (StrTyLit s))) ] = insts
     return $! identifier v ++ " " ++ s ++ " " ++ mods
 
@@ -158,17 +155,13 @@ model :: Name -> Dec -> Q [Dec]
 model backend dec = do
   let
     DataD cxt' name tyvars [RecC constr v's'types] derivs = dec
-
     (typesNoMods, ColumnsInfo prims uniqs refs) =
       runState (mapM dropTypeMods v's'types) (ColumnsInfo [] [] [])
-
     decNoMods = DataD cxt' name tyvars [RecC constr (map snd typesNoMods)] derivs
-
+    tableName = nameBase name
   qRunIO (print prims)
   qRunIO (print uniqs)
-
-  sql <- formatSchema backend typesNoMods
-
+  sql <- formatSchema backend tableName typesNoMods
   (decNoMods :) <$>
     [d|instance Model $(conT backend) $(conT name) where
          type Columns     $(conT name) = $(columns backend v's'types)
@@ -176,7 +169,10 @@ model backend dec = do
          type Uniques     $(conT name) = $(columns backend uniqs)
          type References  $(conT name) = $(columns backend refs)
          type Schema      $(conT name) = $(litT (strTyLit sql))
-
+         type TableName   $(conT name) = $(litT (strTyLit tableName))
          table = buildTable
          schema _ = $(quoteExp Hasql.stmt sql)
       |]
+
+models :: Name -> Q [Dec] -> Q [Dec]
+models backend decs = fmap concat . mapM (model backend) =<< decs
